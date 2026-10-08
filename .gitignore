@@ -1,0 +1,27 @@
+# secrets: never commit or share these
+firmware/**/config.h
+dashboard/notify_config.json
+.env
+.env.*
+!.env.example
+
+# data that is downloaded or produced locally
+ml/data/
+events/
+recordings/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+*.py[cod]
+*.exe
+*.pdb
+build/
+dist/
+*.egg-info/
+
+# local environments and operating-system files
+.venv/
+venv/
+Thumbs.db
+.DS_Store

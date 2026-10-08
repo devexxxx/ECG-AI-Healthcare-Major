@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+numpy
+scipy
+matplotlib
+psutil
+websockets
+pytest
+httpx

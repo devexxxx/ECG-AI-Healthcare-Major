@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ECG Monitor</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; background: #f2f4f7; color: #1c2430; }
+  header { background: #1c2430; color: white; padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; min-width: 220px; }
+  header h1 span { font-size: 12px; color: #b9c2cf; font-weight: normal; }
+  main { padding: 12px 16px; max-width: 1150px; margin: auto; }
+  .pill { padding: 5px 10px; border-radius: 14px; font-size: 13px; background: #3a4656; }
+  .pill.good { background: #1e7a45; }
+  .toggle button { border: 1px solid #8a96a5; background: #2b3645; color: white; padding: 6px 14px; font-size: 13px; cursor: pointer; margin: 0; }
+  .toggle button:first-child { border-radius: 14px 0 0 14px; }
+  .toggle button:last-child { border-radius: 0 14px 14px 0; }
+  .toggle button.on { background: #f0b400; color: #1c2430; font-weight: bold; }
+  .banner { padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 14px; display: none; }
+  #linkBanner { background: #f8d7da; border: 1px solid #d08088; }
+  #modelBanner { background: #fff3cd; border: 1px solid #e0c060; }
+  #simBanner { background: #fff3cd; border: 1px solid #e0c060; }
+  .row { display: grid; gap: 10px; margin-bottom: 10px; }
+  .two { grid-template-columns: 1fr 1fr; }
+  .wide { grid-template-columns: 2.2fr 1fr; }
+  @media (max-width: 800px) { .two, .wide { grid-template-columns: 1fr; } }
+  .card { background: white; border: 1px solid #d5dbe3; border-radius: 6px; padding: 10px 12px; }
+  .card h2 { font-size: 12px; margin: 0 0 6px; color: #6b7785; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .big { font-size: 24px; font-weight: bold; }
+  .card .sub { font-size: 13px; color: #4a5563; margin-top: 3px; }
+  .card.OK { border-left: 8px solid #1e7a45; }
+  .card.INFO { border-left: 8px solid #2f6fb5; }
+  .card.WARNING { border-left: 8px solid #d39e00; background: #fff8e1; }
+  .card.CRITICAL { border-left: 8px solid #c0392b; background: #fdecea; }
+  .card.NONE { border-left: 8px solid #a9b2bd; }
+  .side { display: grid; gap: 10px; align-content: start; }
+  .side .big { font-size: 20px; }
+  canvas { width: 100%; height: 300px; display: block; }
+  .note { font-size: 12px; color: #6b7785; }
+  button { padding: 7px 12px; margin: 3px 3px 3px 0; border: 1px solid #8a96a5; background: white; border-radius: 4px; cursor: pointer; font-size: 14px; }
+  button:hover { background: #e7ecf2; }
+  button.danger { border-color: #c0392b; color: #c0392b; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border-bottom: 1px solid #e3e8ee; padding: 5px 8px; text-align: left; }
+  .tag { padding: 1px 7px; border-radius: 9px; font-size: 11px; background: #e3e8ee; }
+  .tag.sim { background: #f0b400; }
+  details { background: white; border: 1px solid #d5dbe3; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; }
+  summary { cursor: pointer; font-weight: bold; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 14px; margin: 8px 0; font-size: 13px; }
+  .grid small { display: block; color: #6b7785; font-size: 11px; }
+  #log { height: 140px; overflow-y: auto; font-family: Consolas, monospace; font-size: 12px; border-top: 1px solid #e3e8ee; padding-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ECG Monitor <span>demo prototype, single lead, not a medical device</span></h1>
+  <span class="pill" id="devicePill">Device: -</span>
+  <span class="toggle" title="Where the ECG comes from">
+    <button id="srcLive" onclick="post('/api/source?mode=live')">LIVE</button><button id="srcSim" onclick="post('/api/source?mode=sim')">SIMULATION</button>
+  </span>
+</header>
+<main>
+  <div id="linkBanner" class="banner">Dashboard connection lost, trying again...</div>
+  <div id="modelBanner" class="banner"></div>
+  <div id="simBanner" class="banner"></div>
+
+  <div class="row two">
+    <div class="card NONE" id="conditionCard">
+      <h2>Current condition</h2>
+      <div class="big" id="condition">-</div>
+      <div class="sub" id="conditionBy"></div>
+    </div>
+    <div class="card NONE" id="alertCard">
+      <h2>Alert status</h2>
+      <div class="big" id="alertText">No alert</div>
+      <div class="sub" id="alertSub"></div>
+      <button id="cancelButton" onclick="post('/api/alert/cancel')" style="display:none">Cancel</button>
+    </div>
+  </div>
+
+  <div class="row wide">
+    <div class="card">
+      <h2 id="ecgTitle">ECG</h2>
+      <canvas id="ecg" width="1100" height="300"></canvas>
+      <div class="note">8 s sweep, filtered 0.5-40 Hz, approximate mV (uncalibrated), auto-scaled</div>
+    </div>
+    <div class="side">
+      <div class="card">
+        <h2>Heart rate</h2>
+        <div class="big"><span id="bpmDash">-</span> <span style="font-size:14px">BPM</span></div>
+        <div class="sub" id="bpmDevice"></div>
+      </div>
+      <div class="card">
+        <h2>ML result (rhythm class)</h2>
+        <div class="big" id="cls">-</div>
+        <div class="sub" id="clsSource"></div>
+        <div class="note">The ML only knows Normal, PVC, AFib and VT/VF. Too slow, too fast and flat line are found by the rules below.</div>
+      </div>
+      <div class="card NONE" id="ruleCard">
+        <h2>Rule status (heart rate / flat line)</h2>
+        <div class="big" id="rule">-</div>
+        <div class="sub" id="ruleSub"></div>
+      </div>
+      <div class="card">
+        <h2>Signal quality</h2>
+        <div class="big" id="quality">-</div>
+        <div class="sub" id="leads"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row two">
+    <div class="card">
+      <h2>Simulation: replay a recorded ECG</h2>
+      <div id="simButtons"></div>
+      <button onclick="post('/api/sim/stop')">Stop clip</button>
+      <div class="note">The recording goes through the same processing, rules, alert and event steps as live ECG. Only the source is different, and it is marked as simulation everywhere.</div>
+    </div>
+    <div class="card">
+      <h2>Alerts and notifications</h2>
+      <table>
+        <tr><td>Who runs the alert</td><td id="alertOwner">-</td></tr>
+        <tr><td>Device state</td><td id="devState">-</td></tr>
+        <tr><td>Device outputs (expected)</td><td id="outputs">-</td></tr>
+        <tr><td>Telegram</td><td id="notify">-</td></tr>
+        <tr><td>GSM / SMS</td><td id="gsm">-</td></tr>
+      </table>
+      <button class="danger" onclick="post('/api/alert/test')">Test alert</button>
+      <button onclick="post('/api/notify/test')">Telegram test</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:10px">
+    <h2>Saved events (ECG around every alert)</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Level</th><th>What happened</th><th>Found by</th><th>Source</th><th>Heart rate</th><th>Length</th><th>Download</th></tr></thead>
+      <tbody id="events"></tbody>
+    </table>
+  </div>
+
+  <details>
+    <summary>Technical details</summary>
+    <div class="grid">
+      <div><small>Samples in 60 s / gaps / lost</small><b id="counts">-</b></div>
+      <div><small>ADC min / max (5 s), spread (1 s)</small><b id="adc">-</b></div>
+      <div><small>GPS</small><b id="gps">-</b></div>
+      <div><small>SD / OLED</small><b id="parts">-</b></div>
+      <div><small>Device uptime</small><b id="uptime">-</b></div>
+      <div><small>Classifier in use</small><b id="classifier">-</b></div>
+    </div>
+    <button id="recButton" onclick="toggleRecord()">Start recording</button>
+    <span class="note" id="recNote">Recording saves your own live ECG for ml\own_signal_check.py</span>
+    <h2 style="font-size:13px;margin:10px 0 4px">Log</h2>
+    <div id="log"></div>
+  </details>
+</main>
+
+<script>
+const FS = 250;
+const SWEEP = 8 * FS;
+const buf = new Float32Array(SWEEP);
+let pos = 0;
+let filled = 0;
+let last = {};
+let clockOffset = 0;
+const canvas = document.getElementById('ecg');
+const ctx = canvas.getContext('2d');
+const FOUND_BY = { ml: 'ML classifier', rule: 'heart-rate / flat-line rule', signal: 'signal-quality check',
+                   panic: 'panic button', test: 'Test alert button', none: '' };
+const OUTPUTS = {
+  IDLE: 'red LED off, buzzer silent, screen shows BPM',
+  COUNTDOWN: 'red LED blinks fast, 1 beep per second, screen shows the countdown',
+  SENDING: 'red LED solid, screen shows SENDING',
+  ALERT: 'red LED solid, screen shows SENT or SEND FAIL (hold the button 3 s to clear)',
+  COOLDOWN: 'red LED off, new automatic alerts are ignored for 2 minutes',
+};
+
+function el(id) { return document.getElementById(id); }
+
+function show(id, text) { el(id).textContent = text; }
+
+// draw the sweep: new samples overwrite the oldest ones, with a small gap at the write position
+function draw() {
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < filled; i++) { lo = Math.min(lo, buf[i]); hi = Math.max(hi, buf[i]); }
+  if (filled < 2 || hi - lo < 0.2) { const mid = filled ? (hi + lo) / 2 : 0; lo = mid - 0.1; hi = mid + 0.1; }
+  const pad = (hi - lo) * 0.1;
+  lo -= pad; hi += pad;
+  ctx.strokeStyle = '#e3e8ee';
+  ctx.lineWidth = 1;
+  for (let s = 1; s < 8; s++) { ctx.beginPath(); ctx.moveTo(s * w / 8, 0); ctx.lineTo(s * w / 8, h); ctx.stroke(); }
+  ctx.strokeStyle = last.source === 'sim' ? '#b06a00' : '#0a7d3b';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  let pen = false;
+  for (let i = 0; i < filled; i++) {
+    const gap = (i - pos + SWEEP) % SWEEP;
+    if (filled === SWEEP && gap < 40) { pen = false; continue; }
+    const x = i * w / SWEEP;
+    const y = h - (buf[i] - lo) / (hi - lo) * h;
+    if (pen) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    pen = true;
+  }
+  ctx.stroke();
+  requestAnimationFrame(draw);
+}
+
+function addSamples(y) {
+  for (const v of y) {
+    buf[pos] = v;
+    pos = (pos + 1) % SWEEP;
+    if (filled < SWEEP) filled++;
+  }
+}
+
+function addLog(time, text) {
+  const line = document.createElement('div');
+  line.textContent = time + '  ' + text;
+  el('log').prepend(line);
+  while (el('log').children.length > 200) el('log').lastChild.remove();
+}
+
+// the four results are shown apart: ML class, rule status, signal quality, and the condition that sums them up
+function showState(s) {
+  const sourceChanged = last.source !== undefined && last.source !== s.source;
+  last = s;
+  clockOffset = s.now - Date.now() / 1000;
+  if (sourceChanged) { filled = 0; pos = 0; }
+  const st = s.status || {};
+  const simulated = s.source === 'sim';
+
+  show('devicePill', s.device ? 'Device: connected' : 'Device: not connected');
+  el('devicePill').className = s.device ? 'pill good' : 'pill';
+  el('srcLive').className = simulated ? '' : 'on';
+  el('srcSim').className = simulated ? 'on' : '';
+  show('ecgTitle', simulated ? 'ECG - SIMULATION' + (s.sim ? ': ' + s.sim : ' (choose a clip below)') : 'ECG - LIVE from the device');
+  el('modelBanner').style.display = s.classifier === 'cnn' ? 'none' : 'block';
+  show('modelBanner', 'The ML result does not come from the CNN. Classifier in use: ' + s.classifier);
+  el('simBanner').style.display = simulated ? 'block' : 'none';
+  show('simBanner', 'SIMULATION source: a recorded ECG is analysed, not the electrodes.' +
+    (s.device ? ' The device is in SIM MODE and reacts to the alerts for real; its own rules are paused.' : ' No device connected: the dashboard runs the countdown and the Telegram step itself.'));
+
+  show('condition', s.condition.name);
+  show('conditionBy', s.condition.origin === 'none' ? '' : 'found by: ' + FOUND_BY[s.condition.origin]);
+  el('conditionCard').className = 'card ' + s.condition.level;
+
+  show('bpmDash', s.bpm ? s.bpm : '-');
+  show('bpmDevice', s.device ? 'device ' + (simulated ? 'shows' : 'measures') + ': ' + (st.bpm ? st.bpm + ' BPM' : '-') : '');
+  show('cls', s.cls ? s.cls.name + ' (' + Math.round(s.cls.conf * 100) + '%)' : '-');
+  show('clsSource', s.cls ? 'from: ' + s.cls.source : 'no result yet (needs 5 s of clean signal)');
+
+  const r = s.rule;
+  show('rule', r ? r.name + ' - ' + (r.confirmed ? r.level : 'checking') : 'None');
+  show('ruleSub', r ? (r.confirmed ? 'confirmed after ' + r.need + ' s' : 'seen for ' + r.held + ' of ' + r.need + ' s')
+    + (simulated ? '' : ' (in LIVE the device decides this alert)') : 'heart rate and signal are inside the limits');
+  el('ruleCard').className = 'card ' + (r ? (r.confirmed ? r.level : 'INFO') : 'NONE');
+
+  const waiting = s.quality === 'no data' || s.quality === 'starting';
+  show('quality', s.quality === 'ok' ? 'Good' : (waiting ? 'No signal yet' : 'Check electrodes'));
+  show('leads', (waiting || s.quality === 'ok' ? '' : s.quality + '. ') + (s.device && !simulated ? 'leads ' + (st.leads ? 'on' : 'OFF') : ''));
+
+  show('alertOwner', s.device ? 'ESP32 device (countdown, LEDs, buzzer, messages)' : 'dashboard only (no device connected)');
+  show('devState', s.device ? (st.state || '-') + (st.sim ? ', SIM MODE' : '') : 'not connected');
+  show('outputs', s.device ? (OUTPUTS[st.state] || '-') : 'none (no device)');
+  show('notify', s.notify || (st.notify || 'nothing sent yet'));
+  show('gsm', s.device ? (st.gsm || 'off') + (st.gsm === 'ok' ? ', signal ' + st.csq : ' (SMS not verified)') : '-');
+
+  show('counts', s.samples_60s + ' / ' + s.gaps + ' / ' + s.lost);
+  show('adc', s.adc[0] + ' / ' + s.adc[1] + ', ' + s.adc[2]);
+  let gps = '-';
+  if (s.device) {
+    if (st.fix_age === undefined || st.fix_age === -1) gps = 'no fix yet';
+    else if (st.fix_age === -2) gps = Number(st.lat).toFixed(5) + ', ' + Number(st.lon).toFixed(5) + ' (older fix)';
+    else gps = Number(st.lat).toFixed(5) + ', ' + Number(st.lon).toFixed(5) + ' (' + st.fix_age + ' s old)';
+  }
+  show('gps', gps);
+  show('parts', s.device ? 'SD ' + (st.sd ? 'ok' : 'FAIL') + ' / OLED ' + (st.oled ? 'ok' : 'none') : '-');
+  show('uptime', s.device && st.up ? st.up + ' s' : '-');
+  show('classifier', s.classifier);
+  el('recButton').textContent = s.recording ? 'Stop recording' : 'Start recording';
+  showAlert();
+}
+
+// the countdown number is worked out from the end time the dashboard sent
+function showAlert() {
+  const a = last.alert;
+  if (!a) {
+    show('alertText', 'No alert');
+    show('alertSub', '');
+    el('alertCard').className = 'card NONE';
+    el('cancelButton').style.display = 'none';
+    return;
+  }
+  let text = a.level + ': ' + a.reason;
+  let sub = a.phase;
+  if (a.phase === 'countdown') {
+    const left = Math.max(0, Math.ceil(a.until - (Date.now() / 1000 + clockOffset)));
+    sub = 'message goes out in ' + left + ' s' + (a.by === 'device' ? ' (press the device button or Cancel)' : ' (press Cancel to stop it)');
+  }
+  show('alertText', text);
+  show('alertSub', sub + ' - run by the ' + (a.by === 'device' ? 'ESP32 device' : 'dashboard, no device connected'));
+  el('alertCard').className = 'card ' + a.level;
+  el('cancelButton').style.display = 'inline-block';
+  el('cancelButton').textContent = a.phase === 'countdown' ? 'Cancel' : (a.by === 'device' ? 'Cancel (device: hold button 3 s to clear)' : 'Clear');
+}
+
+async function post(url) {
+  const res = await fetch(url, { method: 'POST' });
+  const data = await res.json();
+  if (data.info) addLog(new Date().toTimeString().slice(0, 8), data.info);
+  return data;
+}
+
+async function toggleRecord() {
+  const data = await post(last.recording ? '/api/record/stop' : '/api/record/start');
+  show('recNote', (last.recording ? 'saved ' : 'recording to ') + 'recordings/' + data.file);
+}
+
+function cell(row, text, tagClass) {
+  const td = document.createElement('td');
+  if (tagClass === undefined) td.textContent = text;
+  else { const tag = document.createElement('span'); tag.className = 'tag ' + tagClass; tag.textContent = text; td.appendChild(tag); }
+  row.appendChild(td);
+}
+
+async function loadEvents() {
+  const list = await (await fetch('/api/events')).json();
+  const body = el('events');
+  body.innerHTML = '';
+  for (const ev of list.slice(0, 30)) {
+    const row = document.createElement('tr');
+    cell(row, ev.time);
+    cell(row, ev.level);
+    cell(row, ev.kind + ': ' + ev.reason);
+    cell(row, FOUND_BY[ev.origin] || '-');
+    cell(row, ev.source === 'sim' ? 'SIMULATION' : 'LIVE', ev.source === 'sim' ? 'sim' : '');
+    cell(row, ev.bpm ? ev.bpm + ' BPM' : '-');
+    cell(row, Math.round(ev.samples / ev.fs) + ' s' + (ev.short ? ' (short)' : ''));
+    const files = document.createElement('td');
+    for (const [kind, label] of [['csv', 'ECG data (CSV)'], ['pdf', 'ECG report (PDF)']]) {
+      const a = document.createElement('a');
+      a.href = '/api/events/' + ev.id + '/' + kind;
+      a.textContent = label;
+      a.target = '_blank';
+      a.style.marginRight = '10px';
+      files.appendChild(a);
+    }
+    row.appendChild(files);
+    body.appendChild(row);
+  }
+}
+
+// the socket is opened again by itself whenever it closes
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/ui');
+  ws.onopen = () => { el('linkBanner').style.display = 'none'; loadEvents(); };
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.t === 'ecg') addSamples(msg.y);
+    else if (msg.t === 'state') showState(msg);
+    else if (msg.t === 'log') addLog(msg.time, msg.text);
+    else if (msg.t === 'events') loadEvents();
+  };
+  ws.onclose = () => { el('linkBanner').style.display = 'block'; setTimeout(connect, 2000); };
+}
+
+for (const name of ['Normal', 'PVC', 'AFib', 'VTach', 'VFib', 'Bradycardia', 'Tachycardia', 'Flatline', 'Noisy']) {
+  const b = document.createElement('button');
+  b.textContent = name === 'Noisy' ? 'Noisy / Leads-off' : name;
+  b.onclick = () => post('/api/sim/start?name=' + name);
+  el('simButtons').appendChild(b);
+}
+setInterval(showAlert, 250);
+connect();
+draw();
+</script>
+</body>
+</html>
